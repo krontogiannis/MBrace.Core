@@ -17,10 +17,13 @@ open Nessos.MBrace.Store
 open Nessos.MBrace.Runtime
 
 open Nessos.MBrace.SampleRuntime.Tasks
+open Nessos.MBrace.SampleRuntime.Actors
+
 
 /// IWorkerRef implementation for the runtime
 type Worker(procId : string) =
     let id = sprintf "sample runtime worker (id %s)" procId
+    
     interface IWorkerRef with
         member __.Id = id
         member __.Type = "sample runtime worker node"
