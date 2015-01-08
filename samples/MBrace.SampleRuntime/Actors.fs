@@ -8,6 +8,7 @@
 //
 
 open System
+open System.Collections.Generic
 open System.Threading
 
 open Nessos.Thespian
@@ -88,7 +89,7 @@ type Latch private (source : ActorRef<LatchMessage>) =
 //  Distributed readable cell
 //
 
-type Cell<'T> private (source : ActorRef<IReplyChannel<'T>>) =
+type ImmutableCell<'T> private (source : ActorRef<IReplyChannel<'T>>) =
     member __.GetValue () = source <!- id
     /// Initialize a distributed cell from a value factory ; assume exception safe
     static member Init (f : unit -> 'T) =
@@ -97,7 +98,98 @@ type Cell<'T> private (source : ActorRef<IReplyChannel<'T>>) =
             |> Actor.Publish
             |> Actor.ref
 
-        new Cell<'T>(ref)
+        new ImmutableCell<'T>(ref)
+
+//
+// Distributed mutable cell
+//
+
+type private CellMsg<'T> =
+    | Override of 'T
+    | Set of IReplyChannel<bool> * 'T 
+    | TryRead of IReplyChannel<'T option>
+
+type Cell<'T> private (source: ActorRef<CellMsg<'T>>) =
+    member __.Override(value: 'T) = source <-!- Override value
+    member __.AsyncSet(value: 'T) = source <!- fun ch -> Set(ch, value)
+    member __.Set(value: 'T) = source <!= fun ch -> Set(ch, value)
+    member __.TryAsyncRead() = source <!- TryRead
+    member __.TryRead() = source <!= TryRead
+
+    static member Init(?initValue: 'T) =
+        let behavior state msg =
+            async {
+                match msg with
+                | Override value -> return (Some value)
+                | Set(ch, value) when Option.isSome state ->
+                    do! ch.Reply false
+                    return state
+                | Set(ch, value) ->
+                    do! ch.Reply true
+                    return (Some value)
+                | TryRead ch ->
+                    do! ch.Reply state
+                    return state
+            }
+
+        let source =
+            Actor.Stateful initValue behavior
+            |> Actor.Publish
+            |> Actor.ref
+
+        new Cell<'T>(source)
+
+
+//
+// Store Cache Map
+//
+type private StoreCacheMapMsg =
+    | Cache of (* worker id *) string * (* store entity ids *) string []
+    | Evict of (* worker id *) string * (* store entity ids *) string []
+    | GetPicture of IReplyChannel<((* store entity id *) string * (* worker ids *) string [])[]> * (* store entity ids *) string []
+
+type StoreCacheMap private (source: ActorRef<StoreCacheMapMsg>) =
+    member __.AsyncCache(workerId: string, storeEntities: string[]) = source <-!- Cache(workerId, storeEntities)
+    member __.Cache(workerId: string, storeEntities: string[]) = source <-- Cache(workerId, storeEntities)
+    member __.AsyncEvict(workerId: string, storeEntities: string[]) = source <-!- Evict(workerId, storeEntities)
+    member __.Evict(workerId: string, storeEntities: string[]) = source <-- Evict(workerId, storeEntities)
+    member __.AsyncGetPicture(storeEntities: string[]) = source <!- fun ch -> GetPicture(ch, storeEntities)
+    member __.GetPicture(storeEntities: string[]) = source <!= fun ch -> GetPicture(ch, storeEntities)
+
+    static member Init() =
+        let map = new Dictionary<string, HashSet<string>>()
+
+        let behavior msg =
+            async {
+                match msg with
+                | Cache(workerId, storeEntities) ->
+                    for storeEntity in storeEntities do
+                        let isValue, value = map.TryGetValue(storeEntity)
+                        if isValue then value.Add(workerId) |> ignore
+                        else
+                            let set = new HashSet<string>()
+                            set.Add(workerId) |> ignore
+                            map.Add(storeEntity, set)
+                | Evict(workerId, storeEntities) ->
+                    for storeEntity in storeEntities do
+                        let isValue, value = map.TryGetValue(storeEntity)
+                        if isValue then value.Remove(workerId) |> ignore
+                | GetPicture(ch, storeEntities) ->
+                    let vector = new List<_>()
+                    for storeEntity in storeEntities do
+                        let isValue, value = map.TryGetValue(storeEntity)
+                        if isValue then let workerIds = Seq.toArray value in vector.Add(storeEntity, workerIds)
+
+                    do! ch.Reply <| vector.ToArray()
+            }
+
+        let source =
+            Actor.Stateless behavior
+            |> Actor.Publish
+            |> Actor.ref
+
+        new StoreCacheMap(source)
+        
 
 //
 //  Distributed logger
@@ -378,6 +470,7 @@ type private QueueMsg<'T> =
 
 type private ImmutableQueue<'T> private (front : 'T list, back : 'T list) =
     static member Empty = new ImmutableQueue<'T>([],[])
+    static member Singleton t = ImmutableQueue.Empty.Enqueue t
     member __.Enqueue t = new ImmutableQueue<'T>(front, t :: back)
     member __.TryDequeue () = 
         match front with
@@ -388,7 +481,7 @@ type private ImmutableQueue<'T> private (front : 'T list, back : 'T list) =
             | hd :: tl -> Some(hd, new ImmutableQueue<'T>(tl, []))
 
 /// Provides a distributed, fault-tolerant queue implementation
-type Queue<'T> private (source : ActorRef<QueueMsg<'T>>) =
+type DistributedQueue<'T> private (source : ActorRef<QueueMsg<'T>>) =
     member __.Enqueue (t : 'T) = source <-- EnQueue (t, 0)
     member __.TryDequeue () = source <!- TryDequeue
 
@@ -416,7 +509,61 @@ type Queue<'T> private (source : ActorRef<QueueMsg<'T>>) =
             |> Actor.Publish
             |> Actor.ref
 
-        new Queue<'T>(self.Value)
+        new DistributedQueue<'T>(self.Value)
+
+type private PartIndexedQueueMsg<'K, 'T> =
+    | UnindexedEnqueue of 'T * (* fault count *) int
+    | IndexedEnqueue of 'K * 'T * (* fault count *) int
+    | TryIndexedDequeue of IReplyChannel<('T * (* fault count *) int * LeaseMonitor) option> * 'K
+    | TryUnindexedDequeue of IReplyChannel<('T * (* fault count *) int * LeaseMonitor) option>
+
+type PartIndexedQueue<'K, 'T when 'K : comparison> private (source : ActorRef<PartIndexedQueueMsg<'K, 'T>>) =    
+    member __.Enqueue(key: 'K, t: 'T) = source <-- IndexedEnqueue(key, t, 0)
+    member __.UnindexedEnqueue(t: 'T) = source <-- UnindexedEnqueue(t, 0)
+    member __.TryDequeue(key: 'K) = source <!- fun ch -> TryIndexedDequeue(ch, key)
+    member __.TryUnindexedDequeue() = source <!- fun ch -> TryUnindexedDequeue(ch)
+
+    static member Init() =
+        let self = ref Unchecked.defaultof<ActorRef<PartIndexedQueueMsg<'K, 'T>>>
+        let rec behaviour (queueIndex: Map<'K, ImmutableQueue<'T * int>>, unindexedQueue: ImmutableQueue<'T * int>) msg =
+            async {
+                match msg with
+                | UnindexedEnqueue(t, faultCount) -> return queueIndex, unindexedQueue.Enqueue(t, faultCount)
+                | IndexedEnqueue(k, t, faultCount) ->
+                    match Map.tryFind k queueIndex with
+                    | Some queue -> return queueIndex |> Map.add k (queue.Enqueue(t, faultCount)), unindexedQueue
+                    | None -> return queueIndex |> Map.add k (ImmutableQueue.Singleton(t, faultCount)), unindexedQueue
+                
+                | TryIndexedDequeue(rc, k) ->
+                    match Map.tryFind k queueIndex with
+                    | Some queue ->
+                        match queue.TryDequeue() with
+                        | None -> return! behaviour (queueIndex, unindexedQueue) (TryUnindexedDequeue rc)
+                        | Some((t, faultCount), queue') ->
+                            let putBack, leaseMonitor = LeaseMonitor.Init (TimeSpan.FromSeconds 5.)
+                            do! rc.Reply (Some (t, faultCount, leaseMonitor))
+                            let _ = putBack.Subscribe(fun () -> self.Value <-- UnindexedEnqueue (t, faultCount + 1))
+                            return queueIndex |> Map.add k queue', unindexedQueue
+                    | None -> return! behaviour (queueIndex, unindexedQueue) (TryUnindexedDequeue rc)
+                
+                | TryUnindexedDequeue ch ->
+                    match unindexedQueue.TryDequeue() with
+                    | None ->
+                        do! ch.Reply None
+                        return queueIndex, unindexedQueue
+                    | Some((t, faultCount), queue') ->
+                        let putBack, leaseMonitor = LeaseMonitor.Init (TimeSpan.FromSeconds 5.)
+                        do! ch.Reply (Some (t, faultCount, leaseMonitor))
+                        let _ = putBack.Subscribe(fun () -> self.Value <-- UnindexedEnqueue (t, faultCount + 1))
+                        return queueIndex, queue'
+            }
+
+        self :=
+            Actor.Stateful (Map.empty, ImmutableQueue<'T * int>.Empty) behaviour
+            |> Actor.Publish
+            |> Actor.ref
+
+        new PartIndexedQueue<'K, 'T>(self.Value)
 
 //
 //  Defines a distributed channel implementation

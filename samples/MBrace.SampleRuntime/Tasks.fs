@@ -7,8 +7,10 @@
 // been passed continuations is a typical example of such a task.
 
 open System
+open System.Collections.Generic
 open System.Threading.Tasks
 
+open Nessos.Thespian
 open Nessos.FsPickler
 open Nessos.Vagrant
 
@@ -17,6 +19,7 @@ open Nessos.MBrace.Continuation
 open Nessos.MBrace.Store
 open Nessos.MBrace.Runtime
 open Nessos.MBrace.Runtime.Serialization
+open Nessos.MBrace.Runtime.Store
 open Nessos.MBrace.Runtime.Vagrant
 open Nessos.MBrace.SampleRuntime.Actors
 
@@ -134,6 +137,40 @@ with
             return! TaskExecutionMonitor.AwaitCompletion tem
         }
 
+// type private SchedullerMsg =
+//     | ScheduleTask of task: Task * dependencies: AssemblyId list * faultCount: int * leaseMonitor: LeaseMonitor
+
+// type private SchedullerState =
+//     {
+//         TaskQueue: PartIndexedQueue<string (* IWorkerRef.Id *), Pickle<Task> * AssemblyId list>
+//     }
+
+// type internal Scheduler private (source: ActorRef<SchedullerMsg>) =
+//     static let behavior (state: SchedullerState) (msg: SchedullerMsg) =
+//         async {
+//             match msg with
+//             | ScheduleTask(task, dependencies, faultCount, leaseMonitor) ->
+//                 if state.WorkerQueue.Count = 0 then 
+//                     return { state with UnschedulledTasks = (task, dependencies, faultCount, leaseMonitor)::state.UnschedulledTasks }
+//                 else
+//                     do! scheduleTask task dependencies faultCount leaseMonitor
+//                     return state
+//         }
+
+//     static member Init(initWorkers: WorkerRef list) =
+//         let initState = { WorkerQueue = new Queue<WorkerRef>(initWorkers); UnschedulledTasks = [] }
+//         let source =
+//             Actor.Stateful initState behavior
+//             |> Actor.Publish
+//             |> Actor.ref
+
+//         new Scheduler(source)
+
+//     member __.ScheduleTask(task: Task, dependencies: AssemblyId list, faultCount: int, leaseMonitor: LeaseMonitor) =
+//         source <-!- ScheduleTask(task, dependencies, faultCount, leaseMonitor)
+
+
+
 /// Defines a handle to the state of a runtime instance
 /// All information pertaining to the runtime execution state
 /// is contained in a single process -- the initializing client.
@@ -142,15 +179,17 @@ type RuntimeState =
         /// TCP endpoint used by the runtime state container
         IPEndPoint : System.Net.IPEndPoint
         /// Reference to the global task queue employed by the runtime
-        /// Queue contains pickled task and its vagrant dependency manifest
-        TaskQueue : Queue<Pickle<Task> * AssemblyId list>
+        /// Queue contains pickled task and its vagrant dependency manifestppp
+        TaskQueue : PartIndexedQueue<string (* IWorkerRef.Id *), Pickle<Task> * AssemblyId list>
         /// Reference to a Vagrant assembly exporting actor.
         AssemblyExporter : AssemblyExporter
         /// Reference to the runtime resource manager
         /// Used for generating latches, cancellation tokens and result cells.
         ResourceFactory : ResourceFactory
         /// returns a manifest of workers available to the cluster.
-        Workers : Cell<IWorkerRef []>
+        Workers : ImmutableCell<IWorkerRef []>
+        /// Track cached store entities
+        StoreCacheMap : StoreCacheMap
         /// Distributed logger facility
         Logger : Logger
     }
@@ -159,9 +198,10 @@ with
     static member InitLocal (logger : string -> unit) (getWorkers : unit -> IWorkerRef []) =
         {
             IPEndPoint = Nessos.MBrace.SampleRuntime.Config.getLocalEndpoint()
-            Workers = Cell.Init getWorkers
+            Workers = ImmutableCell.Init getWorkers
+            StoreCacheMap = StoreCacheMap.Init()
             Logger = Logger.Init logger
-            TaskQueue = Queue<_>.Init ()
+            TaskQueue = PartIndexedQueue<_, _>.Init ()
             AssemblyExporter = AssemblyExporter.Init()
             ResourceFactory = ResourceFactory.Init ()
         }
@@ -193,7 +233,7 @@ with
             }
 
         let taskp = VagrantRegistry.Pickler.PickleTyped task
-        rt.TaskQueue.Enqueue(taskp, dependencies)
+        rt.TaskQueue.UnindexedEnqueue(taskp, dependencies)
 
     /// <summary>
     ///     Schedules a cloud workflow as a distributed result cell.
@@ -219,7 +259,7 @@ with
 
     /// Attempt to dequeue a task from the runtime task queue
     member rt.TryDequeue () = async {
-        let! item = rt.TaskQueue.TryDequeue()
+        let! item = rt.TaskQueue.TryUnindexedDequeue()
         match item with
         | None -> return None
         | Some ((tp, deps), faultCount, leaseMonitor) -> 
@@ -227,3 +267,15 @@ with
             let task = VagrantRegistry.Pickler.UnPickleTyped tp
             return Some (task, deps, faultCount, leaseMonitor)
     }
+
+type LocalRuntimeState =
+    {
+        RuntimeState: RuntimeState
+        WorkerRef: IWorkerRef
+    }
+
+    static member InitLocal(workerRef: IWorkerRef, runtimeState: RuntimeState) =
+        {
+            RuntimeState = runtimeState
+            WorkerRef = workerRef
+        }

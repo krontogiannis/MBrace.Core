@@ -3,8 +3,10 @@
 open System.Diagnostics
 open System.Threading
 
+open Nessos.MBrace
 open Nessos.MBrace.Runtime
 open Nessos.MBrace.Runtime.Vagrant
+open Nessos.MBrace.Runtime.Store
 open Nessos.MBrace.SampleRuntime.Actors
 open Nessos.MBrace.SampleRuntime.Tasks
 open Nessos.MBrace.SampleRuntime.RuntimeProvider
@@ -18,7 +20,8 @@ let printfn fmt = Printf.ksprintf System.Console.WriteLine fmt
 /// </summary>
 /// <param name="runtime">Runtime to subscribe to.</param>
 /// <param name="maxConcurrentTasks">Maximum tasks to be executed concurrently by worker.</param>
-let initWorker (runtime : RuntimeState) (maxConcurrentTasks : int) = async {
+let initWorker (localRuntime : LocalRuntimeState) (maxConcurrentTasks : int) = async {
+    let runtime = localRuntime.RuntimeState
 
     let localEndPoint = Nessos.MBrace.SampleRuntime.Config.getLocalEndpoint()
     //printfn "MBrace worker initialized on %O." localEndPoint
@@ -29,6 +32,8 @@ let initWorker (runtime : RuntimeState) (maxConcurrentTasks : int) = async {
         let runtimeProvider = RuntimeProvider.FromTask runtime procId deps t
         let channelProvider = new ActorChannelProvider(runtime)
         Task.RunAsync runtimeProvider channelProvider deps faultCount t
+    
+    FileStoreCache.OnCache |> Event.add (fun (_, storeEntityId) -> runtime.StoreCacheMap.Cache(localRuntime.WorkerRef.Id, [| storeEntityId |]))
 
     let rec loop () = async {
         if !currentTaskCount >= maxConcurrentTasks then
@@ -86,8 +91,9 @@ let workerManager (cts: CancellationTokenSource) (msg: WorkerManager) =
             let runtimeState =
                 let bytes = System.Convert.FromBase64String(runtimeStateStr)
                 VagrantRegistry.Pickler.UnPickle<RuntimeState> bytes
-
-            Async.Start(initWorker runtimeState maxConcurrentTasks, cts.Token)
+            let workerRef = new Worker(System.Diagnostics.Process.GetCurrentProcess().Id.ToString()) :> IWorkerRef
+            let localRuntimeState = LocalRuntimeState.InitLocal(workerRef, runtimeState)
+            Async.Start(initWorker localRuntimeState maxConcurrentTasks, cts.Token)
             try do! rc.Reply() with e -> printfn "Failed to confirm worker subscription to client: %O" e
             return cts
         | Unsubscribe rc ->

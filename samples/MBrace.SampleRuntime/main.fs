@@ -2,9 +2,12 @@
 
     open Nessos.Thespian
     open Nessos.Thespian.Remote.Protocols
+    open Nessos.MBrace
     open Nessos.MBrace.Continuation
     open Nessos.MBrace.Runtime
     open Nessos.MBrace.SampleRuntime.Actors
+    open Nessos.MBrace.SampleRuntime.RuntimeProvider
+    open Nessos.MBrace.SampleRuntime.Tasks
 
     let maxConcurrentTasks = 10
 
@@ -16,7 +19,9 @@
             printfn "MBrace worker initialized on %O." address
             if args.Length > 0 then
                 let runtime = Argument.toRuntime args
-                Async.RunSync (Worker.initWorker runtime maxConcurrentTasks)
+                let workerRef = new Worker(System.Diagnostics.Process.GetCurrentProcess().Id.ToString()) :> IWorkerRef
+                let localRuntime = LocalRuntimeState.InitLocal(workerRef, runtime)
+                Async.RunSync (Worker.initWorker localRuntime maxConcurrentTasks)
                 0
             else
                 Actor.Stateful (new System.Threading.CancellationTokenSource()) Worker.workerManager
