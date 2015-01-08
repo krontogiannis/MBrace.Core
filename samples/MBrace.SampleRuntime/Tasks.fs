@@ -233,7 +233,25 @@ with
             }
 
         let taskp = VagrantRegistry.Pickler.PickleTyped task
-        rt.TaskQueue.UnindexedEnqueue(taskp, dependencies)
+
+        let storeEntities =
+            StorageEntity.GatherStoreEntitiesInObjectGraph(startTask)
+            |> Seq.map (fun s -> s.Id)
+            |> Seq.toArray
+
+        if Array.length storeEntities = 0 then rt.TaskQueue.UnindexedEnqueue(taskp, dependencies)
+        else
+            let picture = rt.StoreCacheMap.GetPicture(storeEntities)
+            let selectedWorkerId =
+                picture
+                |> Seq.collect (fun (storeEntity, workerIds) -> workerIds |> Seq.map (fun workerId -> storeEntity, workerId))
+                |> Seq.groupBy snd
+                |> Seq.sortBy (fun (workerId, data) -> -(Seq.length data))
+                |> Seq.map fst
+                |> Seq.head
+
+
+            rt.TaskQueue.Enqueue(selectedWorkerId, (taskp, dependencies))
 
     /// <summary>
     ///     Schedules a cloud workflow as a distributed result cell.
@@ -260,6 +278,17 @@ with
     /// Attempt to dequeue a task from the runtime task queue
     member rt.TryDequeue () = async {
         let! item = rt.TaskQueue.TryUnindexedDequeue()
+        match item with
+        | None -> return None
+        | Some ((tp, deps), faultCount, leaseMonitor) -> 
+            do! rt.AssemblyExporter.LoadDependencies deps
+            let task = VagrantRegistry.Pickler.UnPickleTyped tp
+            return Some (task, deps, faultCount, leaseMonitor)
+    }
+
+    /// Attempt to dequeue a task from the runtime task queue of specific worker
+    member rt.TryDequeue (workerId: string) = async {
+        let! item = rt.TaskQueue.TryDequeue(workerId)
         match item with
         | None -> return None
         | Some ((tp, deps), faultCount, leaseMonitor) -> 
