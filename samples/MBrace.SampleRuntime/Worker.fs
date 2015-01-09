@@ -1,15 +1,15 @@
-﻿module internal Nessos.MBrace.SampleRuntime.Worker
+﻿module internal MBrace.SampleRuntime.Worker
 
 open System.Diagnostics
 open System.Threading
 
-open Nessos.MBrace
-open Nessos.MBrace.Runtime
-open Nessos.MBrace.Runtime.Vagrant
-open Nessos.MBrace.Runtime.Store
-open Nessos.MBrace.SampleRuntime.Actors
-open Nessos.MBrace.SampleRuntime.Tasks
-open Nessos.MBrace.SampleRuntime.RuntimeProvider
+open MBrace
+open MBrace.Runtime
+open MBrace.Runtime.Vagrant
+open MBrace.Runtime.Store
+open MBrace.SampleRuntime.Actors
+open MBrace.SampleRuntime.Tasks
+open MBrace.SampleRuntime.RuntimeProvider
 
 /// Thread-safe printfn
 let printfn fmt = Printf.ksprintf System.Console.WriteLine fmt
@@ -23,7 +23,7 @@ let printfn fmt = Printf.ksprintf System.Console.WriteLine fmt
 let initWorker (localRuntime : LocalRuntimeState) (maxConcurrentTasks : int) = async {
     let runtime = localRuntime.RuntimeState
 
-    let localEndPoint = Nessos.MBrace.SampleRuntime.Config.getLocalEndpoint()
+    let localEndPoint = MBrace.SampleRuntime.Config.getLocalEndpoint()
     //printfn "MBrace worker initialized on %O." localEndPoint
     printfn "Listening to task queue at %O." runtime.IPEndPoint
 

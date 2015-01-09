@@ -1,17 +1,18 @@
-﻿using System;
+﻿using Microsoft.FSharp.Core;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Nessos.MBrace.CSharp
+namespace MBrace.CSharp
 {
     /// <summary>
     /// Provides methods to create basic Cloud workflows.
     /// </summary>
     public static partial class Cloud
     {
-        private static CloudBuilder builder = CloudBuilderModule.cloud;
+        internal static CloudBuilder Builder = CloudBuilderModule.cloud;
 
         /// <summary>
         /// Constructs a cloud computation that returns the given value.
@@ -20,29 +21,53 @@ namespace Nessos.MBrace.CSharp
         /// <param name="value">Value to return.</param>
         public static Cloud<TResult> FromValue<TResult>(TResult value)
         {
-            return new Cloud<TResult>(builder.Return(value));
+            return new Cloud<TResult>(Builder.Return(value));
         }
 
         public static Cloud<TResult> AsCloud<TResult>(this TResult value)
         {
-            return new Cloud<TResult>(builder.Return(value));
+
+            return new Cloud<TResult>(Builder.Return(value));
         }
 
         public static Cloud<TResult> New<TResult>(Func<Cloud<TResult>> delay)
         {
-            
-            return new Cloud<TResult>(builder.Delay(delay.AsFSharpFunc()));
+            return new Cloud<TResult>(Builder.Delay(delay.AsFSharpFunc()));
+        }
+
+        public static Cloud<TResult> New<TResult>(Func<TResult> delay)
+        {
+            Func<Cloud<TResult>> cloudDelay = () => delay().AsCloud();
+            return new Cloud<TResult>(Builder.Delay(cloudDelay.AsFSharpFunc()));
+        }
+
+        public static CloudUnit New(Func<CloudUnit> delay)
+        {
+            return new CloudUnit(Builder.Delay(delay.AsFSharpFunc()));
         }
 
         public static Cloud<TResult> Then<TSource, TResult>(this Cloud<TSource> workflow, Func<TSource, Cloud<TResult>> continuation)
         {
-            return new Cloud<TResult>(builder.Bind<TSource, TResult>(workflow.Computation, continuation.AsFSharpFunc()));
+            return new Cloud<TResult>(Builder.Bind<TSource, TResult>(workflow.Computation, continuation.AsFSharpFunc()));
         }
 
-        public static Cloud<TResult> ReturnFrom<TResult>(this Cloud<TResult> workflow)
+        public static Cloud<TResult> Then<TSource, TResult>(this Cloud<TSource> workflow, Func<TSource, TResult> continuation)
         {
-            return new Cloud<TResult>(builder.ReturnFrom<TResult>(workflow.Computation));
+            Func<TSource, Cloud<TResult>> f = x => continuation(x).AsCloud();
+            return new Cloud<TResult>(Builder.Bind<TSource, TResult>(workflow.Computation, f.AsFSharpFunc()));
         }
+
+        public static Cloud<TResult> Then<TResult>(this CloudUnit workflow, Func<TResult> continuation)
+        {
+            Func<Cloud<TResult>> f = () => continuation().AsCloud();
+            return new Cloud<TResult>(Builder.Bind<Unit, TResult>(workflow.Computation, f.AsFSharpFunc()));
+        }
+
+        public static Cloud<TResult> Then<TResult>(this CloudUnit workflow, Func<Cloud<TResult>> continuation)
+        {
+            return new Cloud<TResult>(Builder.Bind<Unit, TResult>(workflow.Computation, continuation.AsFSharpFunc()));
+        }
+
 
         // Linq comprehension syntax friendly methods.
 

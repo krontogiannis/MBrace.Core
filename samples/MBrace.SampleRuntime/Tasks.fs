@@ -1,4 +1,4 @@
-﻿module internal Nessos.MBrace.SampleRuntime.Tasks
+﻿module internal MBrace.SampleRuntime.Tasks
 
 // Provides facility for the execution of tasks.
 // In this context, a task denotes a single work item to be sent
@@ -14,14 +14,14 @@ open Nessos.Thespian
 open Nessos.FsPickler
 open Nessos.Vagrant
 
-open Nessos.MBrace
-open Nessos.MBrace.Continuation
-open Nessos.MBrace.Store
-open Nessos.MBrace.Runtime
-open Nessos.MBrace.Runtime.Serialization
-open Nessos.MBrace.Runtime.Store
-open Nessos.MBrace.Runtime.Vagrant
-open Nessos.MBrace.SampleRuntime.Actors
+open MBrace
+open MBrace.Continuation
+open MBrace.Store
+open MBrace.Runtime
+open MBrace.Runtime.Store
+open MBrace.Runtime.Serialization
+open MBrace.Runtime.Vagrant
+open MBrace.SampleRuntime.Actors
 
 // Tasks are cloud workflows that have been attached to continuations.
 // In that sense they are 'closed' multi-threaded computations that
@@ -125,13 +125,19 @@ with
                 }
 
             if faultCount > 0 then
+                // current task has already faulted once, 
+                // consult user-provided fault policy for deciding how to proceed.
                 let faultException = new FaultException(sprintf "Fault exception when running task '%s'." task.TaskId)
                 match task.FaultPolicy.Policy faultCount (faultException :> exn) with
-                | None -> task.Econt ctx <| ExceptionDispatchInfo.Capture faultException
+                | None -> 
+                    // fault policy decrees exception, pass fault to exception continuation
+                    task.Econt ctx <| ExceptionDispatchInfo.Capture faultException
                 | Some timeout ->
+                    // fault policy decrees retry, sleep for specified time and execute
                     do! Async.Sleep (int timeout.TotalMilliseconds)
                     do task.StartTask ctx
             else
+                // no faults, just execute the task
                 do task.StartTask ctx
 
             return! TaskExecutionMonitor.AwaitCompletion tem
@@ -197,7 +203,7 @@ with
     /// Initialize a new runtime state in the local process
     static member InitLocal (logger : string -> unit) (getWorkers : unit -> IWorkerRef []) =
         {
-            IPEndPoint = Nessos.MBrace.SampleRuntime.Config.getLocalEndpoint()
+            IPEndPoint = MBrace.SampleRuntime.Config.getLocalEndpoint()
             Workers = ImmutableCell.Init getWorkers
             StoreCacheMap = StoreCacheMap.Init()
             Logger = Logger.Init logger

@@ -1,6 +1,5 @@
-﻿using Microsoft.FSharp.Core;
-using Nessos.MBrace.CSharp;
-using Nessos.MBrace.SampleRuntime;
+﻿using MBrace.CSharp;
+using MBrace.SampleRuntime;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -8,30 +7,51 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace MBrace.Core.CSharp
+namespace MBrace.CSharp.Tests
 {
     class Program
     {
         public static Cloud<int> Fibonacci(int n)
         {
-            if (n <= 1)
-                return 1.AsCloud();
-            else
-                return Cloud.Parallel(
-                            Fibonacci(n - 1),
-                            Fibonacci(n - 2))
-                        .Then(fs => fs.Sum().AsCloud());
-        }
-
-        public static Cloud<int> Fib(int n)
-        {
-            if (n <= 1)
+            return Cloud.New(() =>
+            {
+                if (n <= 1)
                     return Cloud.FromValue(1);
                 else
-                    return
-                        from x in Fib(n - 1)
-                        from y in Fib(n - 2)
-                        select x + y;
+                    return Cloud.Parallel(
+                                Fibonacci(n - 1),
+                                Fibonacci(n - 2))
+                            .Then(fs => fs.Sum());
+            });
+        }
+
+        public static Cloud<Option<int>> ChoiceExperiment(int i, int j)
+        {
+            return Cloud.New(() =>
+            {
+                Console.WriteLine("i = {0}, j = {1}", i, j);
+
+                if (i == 4 && j == 0) return Option<int>.Some(42).AsCloud();
+                else
+                    return Cloud.Choice(
+                            ChoiceExperiment(i + 1, 0),
+                            ChoiceExperiment(i + 1, 1),
+                            ChoiceExperiment(i + 1, 2));
+            });
+        }
+
+        // This is wrong.
+        public static Cloud<Option<int>> ChoiceExperiment2(int i, int j)
+        {
+            Console.WriteLine("i = {0}, j = {1}", i, j);
+
+            if (i == 4 && j == 0) return Option<int>.Some(42).AsCloud();
+            else
+                return Cloud.Choice(
+                        ChoiceExperiment2(i + 1, 0),
+                        ChoiceExperiment2(i + 1, 1),
+                        ChoiceExperiment2(i + 1, 2));
+            
         }
 
         static void Main(string[] args)
@@ -47,8 +67,16 @@ namespace MBrace.Core.CSharp
             MBraceRuntime.WorkerExecutable = Path.Combine(Directory.GetCurrentDirectory(), "MBrace.SampleRuntime.exe");
             var rt = MBraceRuntime.InitLocal(3, null);
 
+            var w = Cloud.New(() =>
+                Cloud.Choice(
+                    Cloud.Sleep(2000).Then(() => 1),
+                    Cloud.Sleep(1000).Then(() => 2))
+                );
+            var x = rt.Run(w.Computation, null, null);
+
             //var result1 = rt.Run(Fib(10), null, null);
-            var result2 = rt.Run(Cloud.New(() => Fibonacci(10)).Computation, null, null);
+            //var result2 = rt.Run(ChoiceExperiment(0, 0).Computation, null, null);
+            //var result3 = rt.Run(Cloud.New(() => ChoiceExperiment(0, 0)).Computation, null, null);
 
             rt.KillAllWorkers();
         }

@@ -5,13 +5,13 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Nessos.MBrace.CSharp
+namespace MBrace.CSharp
 {
     public class Cloud<TResult>
     {
         public MBrace.Cloud<TResult> Computation { get; private set; }
 
-        internal Cloud(Nessos.MBrace.Cloud<TResult> cloud)
+        internal Cloud(MBrace.Cloud<TResult> cloud)
         {
             this.Computation = cloud;
         }
@@ -20,9 +20,9 @@ namespace Nessos.MBrace.CSharp
     /// <summary>
     /// Cloud Unit.
     /// </summary>
-    public partial class CloudUnit : Cloud<Unit>
+    public class CloudUnit : Cloud<Unit>
     {
-        internal CloudUnit(Nessos.MBrace.Cloud<Unit> cloud) : base(cloud)
+        internal CloudUnit(MBrace.Cloud<Unit> cloud) : base(cloud)
         {
             
         }

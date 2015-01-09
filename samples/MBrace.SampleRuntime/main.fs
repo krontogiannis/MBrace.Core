@@ -1,21 +1,21 @@
-﻿module internal Nessos.MBrace.SampleRuntime.Main
+﻿module internal MBrace.SampleRuntime.Main
 
     open Nessos.Thespian
     open Nessos.Thespian.Remote.Protocols
-    open Nessos.MBrace
-    open Nessos.MBrace.Continuation
-    open Nessos.MBrace.Runtime
-    open Nessos.MBrace.SampleRuntime.Actors
-    open Nessos.MBrace.SampleRuntime.RuntimeProvider
-    open Nessos.MBrace.SampleRuntime.Tasks
+    open MBrace
+    open MBrace.Continuation
+    open MBrace.Runtime
+    open MBrace.SampleRuntime.Actors
+    open MBrace.SampleRuntime.RuntimeProvider
+    open MBrace.SampleRuntime.Tasks
 
     let maxConcurrentTasks = 10
 
     [<EntryPoint>]
     let main (args : string []) =
         try
-            Nessos.MBrace.SampleRuntime.Config.initRuntimeState()
-            let address = Nessos.MBrace.SampleRuntime.Config.getAddress()
+            MBrace.SampleRuntime.Config.initRuntimeState()
+            let address = MBrace.SampleRuntime.Config.getAddress()
             printfn "MBrace worker initialized on %O." address
             if args.Length > 0 then
                 let runtime = Argument.toRuntime args

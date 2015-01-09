@@ -1,4 +1,4 @@
-﻿module internal Nessos.MBrace.SampleRuntime.RuntimeProvider
+﻿module internal MBrace.SampleRuntime.RuntimeProvider
 
 //
 //  Implements the scheduling context for sample runtime.
@@ -11,13 +11,13 @@ open System.Diagnostics
 open Nessos.Thespian
 open Nessos.Thespian.Remote
 
-open Nessos.MBrace
-open Nessos.MBrace.Continuation
-open Nessos.MBrace.Store
-open Nessos.MBrace.Runtime
+open MBrace
+open MBrace.Continuation
+open MBrace.Store
+open MBrace.Runtime
 
-open Nessos.MBrace.SampleRuntime.Tasks
-open Nessos.MBrace.SampleRuntime.Actors
+open MBrace.SampleRuntime.Tasks
+open MBrace.SampleRuntime.Actors
 
 
 /// IWorkerRef implementation for the runtime
